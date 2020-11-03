@@ -118,6 +118,26 @@ let cut_the_guess equas =
   cut_rec equas
 ;;
 
+let barendregtisation t =
+  let rec barendrec t ctx = match t with
+    TyFun(arg,res) -> let baren_arg  = barendrec arg ctx in
+                      let baren_res = barendrec res ctx in
+                      TyFun(baren_arg,baren_res)
+    | TyVar(x) as var -> let res = Typecontext.find_opt x ctx in
+             let check v = match v with
+                 Some (name) -> TyVar(name)
+               | None -> var
+             in check res
+    | TyInt -> t
+    | TyList(t) -> TyList(barendrec t ctx)
+    | TyForall(TyVar(arg),res) -> let tvar = fresh_tvar () in
+                            let new_ctx = Typecontext.add arg tvar ctx in
+                            TyForall(TyVar(tvar),barendrec res new_ctx)
+    | _ -> t
+  in
+  barendrec t (Typecontext.empty)
+;;    
+
 
 let unification_step equs step =
   let length = List.length equs in
@@ -142,8 +162,14 @@ let unification_step equs step =
                                 (substitute_everywhere name td new_equs,Recommence)
                               else
                                 (ErroratStep("error at step :"^(string_of_int step)) :: equs,Echec)
-      (*|Equa(TyForall(var,res),td) -> *)
-      (*|Equa(tg,TyForall(var,res)) -> *)
+      |Equa(TyForall(var,res),td) -> let typ1 = barendregtisation res in
+                                     let eq1 = Equa(typ1,td) in
+                                     let new_equs = remove_l equs step in
+                                     (new_equs@(eq1::[]),Recommence)
+      |Equa(tg,TyForall(var,res)) -> let typ1 = barendregtisation res in
+                                     let eq1 = Equa(typ1,tg) in
+                                     let new_equs = remove_l equs step in
+                                     (new_equs@(eq1::[]),Recommence)
       |Equa(TyList(t1),TyList(t2)) -> let new_equs = remove_l equs step in
                                       let eq1 = Equa(t1,t2) in
                                       (new_equs@(eq1 :: []),Recommence)
@@ -206,8 +232,8 @@ let rec gen_equas ctx trm target =
                           let equ_fun = gen_equas ctx term1 (TyFun(TyVar(ta),target)) in
                           let equ_arg = gen_equas ctx term2 (TyVar(ta)) in
                           List.append equ_fun equ_arg
-  | TmUniOp(op,trm) -> genEquaOp op target :: equas
-  | TmBinOp(op,term1,term2) -> genEquaOp op target :: equas
+  | TmUniOp(op,trm) -> (genEquaOp op target) :: equas
+  | TmBinOp(op,term1,term2) -> (genEquaOp op target) :: equas
   | TmList(xs) -> genEquaList xs target ctx
   | TmIfBz(cond,th,el) -> let condEqua = gen_equas ctx cond TyInt in
                           let thEqua = gen_equas ctx th target in
@@ -275,12 +301,27 @@ and type_inference term ctx =
 
 let emptyContext = Typecontext.empty;;
 
-let typer term = type_inference term emptyContext;;
+let typer term = let (typ,status) = type_inference term emptyContext in
+  (pretty_printer_type typ,status)
 
+(*Test pour itération 1/2*)
 let idIntTerm = TmAbs("x",TmVar "x");; (* /x : Int -> x*)
 let idFunTerm = TmAbs("f",TmVar "f");; (* /f : int -> int -> f *)
 let idAppTerm = TmApp (idFunTerm,idIntTerm);;
 let appFunc = TmAbs("x",TmAbs("y",TmApp(TmVar "x", TmVar "y")));; (* /xy -> x y *)
 let s = TmAbs( "x" , TmAbs ( "y" , TmAbs ( "z", TmApp ( TmApp (TmVar "x" , TmVar "z" ) , TmApp (TmVar "y",TmVar "z") ) )));;
 let delta = TmAbs ( "x" , TmApp (TmVar "x" , TmVar "x" ));;
+
+(*Test pour itération 3*)
+let addTerm = TmBinOp(Add,TmInt(5),TmInt(9));;
+let subTerm = TmBinOp(Sub,TmInt(5),TmInt(9));;
+(*celui qui suit : match failure*)
+let listTerm = TmList(Cons(TmInt(6),Nil));;
+
+let hdIntTerm = TmUniOp(Hd,TmList(Cons(TmInt(6),Nil)));;
+let tailIntTerm = TmUniOp(Tl,TmList(Cons(TmInt(8),Cons(TmInt(6),Nil))));;
+(*les trois suivant ne marchent pas : match failure*)
+let ifbzTerm = TmIfBz(TmInt(0),listTerm,listTerm);;
+let ifbeTerm = TmIfBe(TmList(Nil),listTerm,listTerm);;
+let letTerm = TmLet("x",TmInt(7),ifbzTerm);;
 
