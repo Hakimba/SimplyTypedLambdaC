@@ -2,7 +2,7 @@ open Types
 
 
 (*constantes et generateur*)
-let max_unif = ref 10;;
+let max_unif = ref 1000;;
 let cnt_tvar = ref 0;;
 let fresh_tvar () = incr cnt_tvar; "T"^(string_of_int !cnt_tvar);;
 
@@ -17,6 +17,13 @@ let rec pretty_printer_type t =
   | TyForall(TyVar(x),t) -> "∀"^x^"."^(pretty_printer_type t)
   | _ -> ""
 ;;
+
+
+let statusToString sts = match sts with
+  Fini -> "Fini"
+  | Continue -> "continue"
+  | Echec -> "echec"
+  | Recommence -> "recommence"
 
 let opToString op = match op with
     Add -> "+"
@@ -75,8 +82,8 @@ let occur_check name typ =
 ;;
 
 let substitute v ts t =
-  let rec sub_rec t = match t with
-      (TyVar x) -> if x = v then ts else t
+  let rec sub_rec t' = match t' with
+      (TyVar x) -> if x = v then ts else t'
     | TyFun(t1,t2) -> let rt1 = sub_rec t1 in
                       let rt2 = sub_rec t2 in
                       TyFun(rt1,rt2)
@@ -157,7 +164,7 @@ let unification_step equs step =
       |Equa(TyFun(tga,tgr),TyFun(tda,tdr)) -> let new_equs = remove_l equs step in
                                              let eq1 = Equa(tga,tda) in
                                              let eq2 = Equa(tgr,tdr) in
-                                             
+
                                              (new_equs@(eq1 ::(eq2 :: [])),Recommence)
       |Equa(tg,TyVar(name)) -> if not (occur_check name tg) then
                                 let new_equs = remove_l equs step in
@@ -207,7 +214,7 @@ let free_var typ =
 
     | TyVar(name) -> (name :: freeset)
     | TyInt -> freeset
-    | TyList(t) -> free_rec t freeset
+    | TyList(t') -> free_rec t' freeset
     | TyForall(TyVar(var),res) -> let freeres = free_rec res freeset in
                           remove_var var freeres 
     | _ -> raise CtorTypeNotSupported in
@@ -302,7 +309,7 @@ and type_inference term ctx =
   let equations = gen_equas ctx term (TyVar("???")) in
   (*let str_equs = List.map (function eq -> pretty_printer_equas eq) equations in
   let () = List.iter print_string str_equs in*) 
-  let (res,status) = unification equations in
+  let (res,status) = unification equations in print_string (statusToString status);
   if status = Fini then let typ = (cut_the_guess res) in (typ,status)
   else raise (TypingFail ("Echec de typage pour le terme : "^(pretty_printer_term term)))
   
@@ -323,7 +330,7 @@ let ex_k = TmAbs("x",TmAbs("y",TmVar("x")));; (*ok*)
 let ex_a = TmAbs("x",TmAbs("y",TmApp(TmVar("x"),TmVar("y"))));; (*ok*)
 (*ok*)
 let ex_s = TmAbs( "x" , TmAbs ( "y" , TmAbs ( "z", TmApp ( TmApp (TmVar "x" , TmVar "z" ) , TmApp (TmVar "y",TmVar "z") ) )));;
-let ex_sk = TmApp(ex_s,ex_k);; (*type pas*)
+let ex_skk = TmApp(TmApp(ex_s,ex_k),ex_k);; (*ok*)
 let delta = TmAbs ( "x" , TmApp (TmVar "x" , TmVar "x" ));;
 let ex_om = TmApp(delta,delta);; (*ok*)
 let ex_kiom = TmApp(TmApp(ex_k,ex_id),ex_om);; (*ok*)
