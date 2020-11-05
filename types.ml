@@ -21,8 +21,7 @@ and term =
 | TmAbs of string * term
 | TmApp of term * term
 | TmInt of int
-| TmUniOp of op * term
-| TmBinOp of op * term * term
+| TmOp of op
 | TmList of llist
 | TmIfBz of term * term * term
 | TmIfBe of term * term * term

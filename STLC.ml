@@ -40,11 +40,12 @@ let rec pretty_printer_term t =
                          let t = pretty_printer_term t in
                          "λ"^name^"."^t
   | TmApp(t1,t2) -> (pretty_printer_term t1)^" "^(pretty_printer_term t2)
-  | TmUniOp(op,arg) -> let opstr = opToString op in opstr ^ (pretty_printer_term arg)
+  (*| TmUniOp(op,arg) -> let opstr = opToString op in opstr ^ (pretty_printer_term arg)
   | TmBinOp(op,arg1,arg2) -> let opstr = opToString op in
                               let arg1str = pretty_printer_term arg1 in
                               let arg2str = pretty_printer_term arg2 in
-                              opstr ^ arg1str ^ arg2str
+                              opstr ^ arg1str ^ arg2str*)
+  | TmOp(op) -> opToString op
   | TmList(xs) -> pretty_print_llist xs
   | TmIfBz(body,t,e) -> let bodystr = pretty_printer_term body in
                         let thenstr = pretty_printer_term t in
@@ -66,7 +67,7 @@ and pretty_print_llist l =
 ;;
 
 let pretty_printer_equas equas = match equas with
-    Equa(t1,t2) -> "equation : ["^(pretty_printer_type t1)^","^(pretty_printer_type t2)^"] "
+    Equa(t1,t2) -> "\nequation : ["^(pretty_printer_type t1)^","^(pretty_printer_type t2)^"] "
   | _ -> ""
 
 
@@ -87,7 +88,7 @@ let substitute v ts t =
     | TyFun(t1,t2) -> let rt1 = sub_rec t1 in
                       let rt2 = sub_rec t2 in
                       TyFun(rt1,rt2)
-    | TyInt -> t
+    | TyInt -> t'
     | TyList(res) -> let sub = sub_rec res in TyList(sub)
     | TyForall(arg,res) -> let sub = sub_rec res in
                             TyForall(arg,sub)
@@ -102,10 +103,11 @@ let substitute_everywhere v ts equs =
       equs
 ;;
   
-let remove_l l nth =
-  let rec rem_rec l n = match l,n with
+let remove_l l nth = let length = List.length l in
+  let last_el = List.nth l (length-1) in
+  let rec rem_rec l' n = match l',n with
       [],_ -> raise BadAccess
-    | (x::xs),n -> if n = nth then xs
+    | (x::xs),n -> if n = nth then let new_l = last_el :: xs in List.rev (List.tl (List.rev new_l)) (*très sale mais a ce stade j'ai plus le temps de passer sur des tableaux et des access constant*)
                     else x :: (rem_rec xs (n+1))
   in
   rem_rec l 0;;
@@ -113,8 +115,8 @@ let remove_l l nth =
 
 
 let genEquaOp op target = match op with
-  Add -> Equa(target,TyFun(TyFun(TyInt,TyInt),TyInt))
-  | Sub -> Equa(target,TyFun(TyFun(TyInt,TyInt),TyInt))
+  Add -> Equa(target,TyFun(TyInt,TyFun(TyInt,TyInt)))
+  | Sub -> Equa(target,TyFun(TyInt,TyFun(TyInt,TyInt)))
   | Hd -> let tvar = fresh_tvar () in
             Equa(target,TyForall(TyVar tvar,TyFun(TyList(TyVar tvar),TyVar tvar)))
   | Tl -> let tvar = fresh_tvar () in
@@ -247,18 +249,21 @@ let rec gen_equas ctx trm target =
                           let equ_fun = gen_equas ctx term1 (TyFun(TyVar(ta),target)) in
                           let equ_arg = gen_equas ctx term2 (TyVar(ta)) in
                           List.append equ_fun equ_arg
-  | TmUniOp(op,trm) -> (genEquaOp op target) :: equas
-  | TmBinOp(op,term1,term2) -> (genEquaOp op target) :: equas
+  | TmOp(op) -> (genEquaOp op target) :: equas
   | TmList(xs) -> genEquaList xs target ctx
-  | TmIfBz(cond,th,el) -> let condEqua = gen_equas ctx cond TyInt in
-                          let thEqua = gen_equas ctx th target in
-                          let elEqua = gen_equas ctx el target in
-                          condEqua @ (thEqua @ elEqua)
+  | TmIfBz(cond,th,el) -> let nt = fresh_tvar () in
+                          let condEqua = gen_equas ctx cond TyInt in
+                          let thEqua = gen_equas ctx th (TyVar(nt)) in
+                          let elEqua = gen_equas ctx el (TyVar(nt)) in
+                          let eqs1 = condEqua @ (thEqua @ elEqua) in
+                          eqs1@(Equa(target,TyVar(nt)) :: [])
   | TmIfBe(cond,th,el) -> let tvar = fresh_tvar () in
+                          let nt = fresh_tvar () in
                           let condEqua = gen_equas ctx cond (TyList(TyVar(tvar))) in
-                          let thEqua = gen_equas ctx th target in
-                          let elEqua = gen_equas ctx el target in
-                          condEqua @ (thEqua @ elEqua)
+                          let thEqua = gen_equas ctx th (TyVar(nt)) in
+                          let elEqua = gen_equas ctx el (TyVar(nt)) in
+                          let eqs1 = condEqua @ (thEqua @ elEqua) in
+                          eqs1@(Equa(target,TyVar(nt)) :: [])
   | TmLet(var,e1,e2) -> let (typeOfe1,status) = type_inference e1 ctx in
                           let generalised = generalise typeOfe1 in
                           let new_ctx = Typecontext.add var generalised ctx in
@@ -280,6 +285,8 @@ and unification equs =
   let status = ref Echec in
   while (!c) < (!max_unif) do
     let (res,stat) = unification_step (!new_equs) (!step) in
+    (*let str_equs = List.map (function eq -> pretty_printer_equas eq) res in
+    let () = List.iter print_string str_equs in*)
     if stat = Continue then
       begin
         new_equs := res;
@@ -293,10 +300,14 @@ and unification equs =
         end
       else
         if stat = Echec then
-          new_equs := res
+          begin
+            new_equs := res;
+            c := !max_unif
+          end
         else (* fini *)
           begin
-            new_equs := res
+            new_equs := res;
+            c := !max_unif
           end;
     incr c;
     status := stat
@@ -308,8 +319,10 @@ and unification equs =
 and type_inference term ctx =
   let equations = gen_equas ctx term (TyVar("???")) in
   (*let str_equs = List.map (function eq -> pretty_printer_equas eq) equations in
-  let () = List.iter print_string str_equs in*) 
-  let (res,status) = unification equations in print_string (statusToString status);
+  let () = List.iter print_string str_equs in*)
+  let (res,status) = unification equations in
+  (*let str_equs = List.map (function eq -> pretty_printer_equas eq) res in
+  let () = List.iter print_string str_equs in*)
   if status = Fini then let typ = (cut_the_guess res) in (typ,status)
   else raise (TypingFail ("Echec de typage pour le terme : "^(pretty_printer_term term)))
   
@@ -317,8 +330,8 @@ and type_inference term ctx =
 
 let emptyContext = Typecontext.empty;;
 
-let typer term = let (typ,_) = type_inference term emptyContext in
-  pretty_printer_type typ
+let typer term = let (typ,status) = type_inference term emptyContext in
+  (pretty_printer_term term)^" : "^(pretty_printer_type typ)
 
 
 (*------------------------TESTs-----------------------------------------*)
@@ -339,21 +352,22 @@ let ex_siii = TmApp(TmApp(TmApp(ex_s,ex_id),ex_id),ex_id);; (*ok*)
 
 
 (*Test pour itération 3*)
-let ex_2p3 = TmBinOp(Add,TmInt(2),TmInt(7));;  (*pas ok, il donne int->int->int au lieu de int*)
-let ex_plus = TmAbs("x",TmAbs("y",TmBinOp(Add,TmVar("x"),TmVar("y"))));;
-let ex_plus23 = TmApp(TmApp(ex_plus,TmInt(2)),TmInt(7));;
-let ex_moins = TmAbs("x",TmAbs("y",TmBinOp(Sub,TmVar("x"),TmVar("y"))));;
-let ex_moins23 = TmApp(TmApp(ex_moins,TmInt(2)),TmInt(3));;
-let ex_moins32 = TmApp(TmApp(ex_moins,TmInt(3)),TmInt(2));;
+let ex_2p3 = TmApp(TmApp(TmOp(Add),TmInt(7)),TmInt(7));;  (*ok*)
+let ex_plus = TmAbs("x",TmAbs("y",TmApp(TmApp(TmOp(Add),TmVar("x")),TmVar("y"))));; (*ok*)
+let ex_plus23 = TmApp(TmApp(ex_plus,TmInt(2)),TmInt(7));; (*ok*)
+let ex_moins = TmAbs("x",TmAbs("y",TmApp(TmApp(TmOp(Sub),TmVar("x")),TmVar("y"))));; (*ok*)
+let ex_moins23 = TmApp(TmApp(ex_moins,TmInt(2)),TmInt(3));; (*ok*)
+let ex_moins32 = TmApp(TmApp(ex_moins,TmInt(3)),TmInt(2));; (*ok*)
 (*let ex_seq123 = ;;
 let ex_enseq3 = ;;
 let ex_enseq2d4 = ;;
 let ex_seq3i = ;;
-let ex_enseq2d = ;;
-let ex_cons123 = ;;
-let ex_izte23a0 = ;;
-let ex_izte23a8 = ;;
-let ex_iete23ae = ;;
-let ex_iete23a123 = ;;
-let letTerm = TmLet("x",addTerm,TmApp(TmAbs("x",TmBinOp(Add,TmVar("x"),TmInt(1))),TmVar("x")));;*)
+let ex_enseq2d = ;;  pas encore se seq*)
+let ex_cons123 = TmList(Cons(TmInt(1),Cons(TmInt(2),Cons(TmInt(3),Nil))));;
+let ex_izte23a0 = TmIfBz(TmInt(0), TmInt(2), TmInt(3));; (*ok*)
+let ex_izte23a8 = TmIfBz(TmInt(8), TmInt(2), TmInt(3));; (*ok*)
+let ex_iete23ae = TmIfBe(TmList(Nil), TmInt(2), TmInt(3));; (*ok*)
+let ex_iftyp = TmIfBe(TmList(Cons(TmInt(0),Nil)),TmInt(7),TmList(Nil));; (*ok, pas uniforme donc le type passe pas et c'est normal*)
+(*let ex_iete23a123 = ;;*)
+let letTerm = TmLet("x",ex_2p3,TmApp(TmAbs("x",TmApp(TmApp(TmOp(Add),TmVar("x")),TmInt(7))),TmVar("x")));;
 
