@@ -25,7 +25,9 @@ let barendregt (t:term) =
                             let new_m = RefVar.add name new_v map in
                             TmAbs(new_v, barend_rec term new_m)
 
-    | TmApp(t1, t2) -> TmApp(barend_rec t1 map, barend_rec t2 map)
+    | TmApp(t1, t2) -> let barendt1 = barend_rec t1 map in
+                        let barendt2 = barend_rec t2 map in 
+                      TmApp(barendt1, barendt2)
 
     | TmList(seq) ->  let rec seqBarend l res = 
                         match l with
