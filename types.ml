@@ -50,3 +50,4 @@ exception BadAccess;;
 exception GuessNotFound;;
 exception CtorTypeNotSupported;;
 exception TypingFail of string ;;
+exception BreakLoop;;

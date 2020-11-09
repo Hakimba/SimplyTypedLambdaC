@@ -1,4 +1,3 @@
-open Types
 
 
 (*constantes et generateur*)
@@ -316,7 +315,7 @@ and unification equs =
         else (* fini *)
           begin
             new_equs := res;
-            c := !max_unif
+            c := !max_unif (*on l'arrete*)
           end;
     incr c;
     status := stat
