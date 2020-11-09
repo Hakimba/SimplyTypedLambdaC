@@ -187,6 +187,15 @@ let barendregtisation t =
                  Some (name) -> TyVar(name)
                | None -> var
              in check res
+    | TyWV(name,typ,utilise) -> if utilise then
+                                  let nt = barendrec typ ctx in
+                                  TyWV(name,nt,utilise)
+                                else
+                                  let res = Typecontext.find_opt name ctx in
+                                   let check v = match v with
+                                       Some (new_n) -> TyWV(new_n,typ,utilise)
+                                     | None -> TyWV(name,typ,utilise)
+                                   in check res
     | TyInt -> t
     | TyList(t') -> TyList(barendrec t' ctx)
     | TyForall(arg,res) -> let tvar = fresh_tvar () in
@@ -194,6 +203,14 @@ let barendregtisation t =
                             TyForall(tvar,barendrec res new_ctx)
     | TyUnit -> t
     | TyRef(t') -> TyRef(barendrec t' ctx)
+    | TyWF(name,typ,utilise) -> if utilise then
+                                  let nt = barendrec typ ctx in
+                                  TyWF(name,nt,utilise)
+                                else
+                                  let tvar = "_"^(fresh_tvar ()) in
+                                  let new_ctx = Typecontext.add name tvar ctx in
+                                  let nt = barendrec typ new_ctx in
+                                  TyWF(name,nt,utilise)
     | _ -> t
   in
   barendrec t (Typecontext.empty)
@@ -224,6 +241,22 @@ let unification_step equs step =
                                 (substitute_everywhere name tg new_equs,Recommence)
                               else
                                 (ErroratStep("error at step :"^(string_of_int step)) :: equs,Echec)
+      |Equa(TyWV(name,typ,utilise),td) -> if not (occur_check name td) then
+                                            if utilise then
+                                              let eq1 = Equa(typ,td) in
+                                              let new_equs = remove_l equs step in
+                                              (new_equs@(eq1::[]),Recommence)
+                                            else ((remove_l equs step),Recommence)
+                                          else
+                                            (ErroratStep("error at step :"^(string_of_int step)) :: equs,Echec)
+      |Equa(tg,TyWV(name,typ,utilise)) -> if not (occur_check name tg) then
+                                            if utilise then
+                                              let eq1 = Equa(typ,tg) in
+                                              let new_equs = remove_l equs step in
+                                              (new_equs@(eq1::[]),Recommence)
+                                            else ((remove_l equs step),Recommence)
+                                          else
+                                            (ErroratStep("error at step :"^(string_of_int step)) :: equs,Echec)
       |Equa(TyForall(var,res),td) -> let typ1 = barendregtisation (TyForall(var,res)) in
                                      let rs x = match x with
                                       TyForall(v,r) -> r
@@ -238,6 +271,11 @@ let unification_step equs step =
                                      let eq1 = Equa((rs typ1),tg) in
                                      let new_equs = remove_l equs step in
                                      (new_equs@(eq1::[]),Recommence)
+      |Equa(TyWF(name,typ,utilise),td) ->
+                                            let eq1 = Equa(typ,td) in
+                                            let new_equs = remove_l equs step in
+                                            (new_equs@(eq1::[]),Recommence)
+
       |Equa(TyList(t1),TyList(t2)) -> let new_equs = remove_l equs step in
                                       let eq1 = Equa(t1,t2) in
                                       (new_equs@(eq1 :: []),Recommence)
