@@ -13,9 +13,11 @@ let rec pretty_printer_type t =
                     let t2' = pretty_printer_type t2 in
                     let res = "("^t1'^") → "^t2' in res
   | TyList(t) -> "["^(pretty_printer_type t)^"]"
-  | TyForall(TyVar(x),t) -> "∀"^x^"."^(pretty_printer_type t)
+  | TyForall(x,t) -> "∀"^x^"."^(pretty_printer_type t)
   | TyUnit -> "unit"
   | TyRef(t) -> "ref "^(pretty_printer_type t)
+  | TyWV(name,t,utilise) -> if utilise then pretty_printer_type t else name
+  | TyWF(name,t,utilise) -> if utilise then pretty_printer_type t else "∀"^name^"."^(pretty_printer_type t)
   | _ -> ""
 ;;
 
@@ -86,11 +88,13 @@ let occur_check name typ =
   let rec occur_rec t = match t with
       TyInt -> false
     | TyVar(x) -> x=name
+    | TyWF(n,t',utilise) -> occur_rec t'
     | TyFun(t1,t2) -> occur_rec t1 || occur_rec t2
-    | TyList(t) -> occur_rec t
+    | TyList(t') -> occur_rec t'
     | TyForall(arg,res) -> occur_rec res
     | TyUnit -> false
-    | TyRef(t) -> occur_rec t
+    | TyRef(t') -> occur_rec t'
+    | TyWV(n,t',utilise) -> if utilise then occur_rec t' else n=name
   in
   occur_rec typ
 ;;
@@ -98,6 +102,10 @@ let occur_check name typ =
 let substitute v ts t =
   let rec sub_rec t' = match t' with
       (TyVar x) -> if x = v then ts else t'
+    | TyWV(name,typ,utilise) -> if utilise then
+                                  let nt = sub_rec typ in
+                                  TyWV(name,nt,utilise)
+                                else t'
     | TyFun(t1,t2) -> let rt1 = sub_rec t1 in
                       let rt2 = sub_rec t2 in
                       TyFun(rt1,rt2)
@@ -107,6 +115,8 @@ let substitute v ts t =
                             TyForall(arg,sub)
     | TyUnit -> t'
     | TyRef(t1) -> TyRef(sub_rec t1)
+    | TyWF(name,typ,utilise) -> let rt = sub_rec typ in
+                                TyWF(name,rt,utilise)
   in sub_rec t
 ;;
 
@@ -133,26 +143,26 @@ let genEquaOp op target = match op with
   Add -> Equa(target,TyFun(TyInt,TyFun(TyInt,TyInt)))
   | Sub -> Equa(target,TyFun(TyInt,TyFun(TyInt,TyInt)))
   | Hd -> let tvar = fresh_tvar () in
-            Equa(target,TyForall(TyVar tvar,TyFun(TyList(TyVar tvar),TyVar tvar)))
+            Equa(target,TyForall(tvar,TyFun(TyList(TyVar tvar),TyVar tvar)))
   | Tl -> let tvar = fresh_tvar () in
-            Equa(target,TyForall(TyVar tvar,TyFun(TyList(TyVar tvar),TyList(TyVar tvar))))
+            Equa(target,TyForall(tvar,TyFun(TyList(TyVar tvar),TyList(TyVar tvar))))
   | Cons -> let tvar = fresh_tvar () in 
-            let new_type = TyForall(TyVar tvar,
+            let new_type = TyForall(tvar,
                             TyFun(TyVar(tvar),
                               TyFun(TyList(TyVar(tvar)),
                                 TyList(TyVar(tvar))))) in
             Equa(target,new_type)
   | Fixpoint -> ErroratStep "generation d'equation pour point fixe non pris en charge"
   | Deref -> let tvar = fresh_tvar () in
-              let new_type = TyForall(TyVar tvar,
+              let new_type = TyForall(tvar,
                               TyFun(TyRef(TyVar tvar),TyVar tvar)) in
               Equa(target,new_type)
   | Ref -> let tvar = fresh_tvar () in
-            let new_type = TyForall(TyVar tvar,
+            let new_type = TyForall(tvar,
                             TyFun(TyVar tvar,TyRef(TyVar(tvar)))) in
             Equa(target,new_type)
   | Assign -> let tvar = fresh_tvar () in
-                let new_type = TyForall(TyVar tvar,
+                let new_type = TyForall(tvar,
                               TyFun(TyRef(TyVar tvar),TyFun(TyVar tvar,TyUnit))) in
                 Equa(target,new_type)
 ;;
@@ -179,9 +189,9 @@ let barendregtisation t =
              in check res
     | TyInt -> t
     | TyList(t') -> TyList(barendrec t' ctx)
-    | TyForall(TyVar(arg),res) -> let tvar = fresh_tvar () in
+    | TyForall(arg,res) -> let tvar = fresh_tvar () in
                             let new_ctx = Typecontext.add arg tvar ctx in
-                            TyForall(TyVar(tvar),barendrec res new_ctx)
+                            TyForall(tvar,barendrec res new_ctx)
     | TyUnit -> t
     | TyRef(t') -> TyRef(barendrec t' ctx)
     | _ -> t
@@ -258,7 +268,7 @@ let free_var typ =
     | TyVar(name) -> (name :: freeset)
     | TyInt -> freeset
     | TyList(t') -> free_rec t' freeset
-    | TyForall(TyVar(var),res) -> let freeres = free_rec res freeset in
+    | TyForall(var,res) -> let freeres = free_rec res freeset in
                           remove_var var freeres 
     | TyUnit -> freeset
     | TyRef(t') -> free_rec t' freeset
@@ -269,7 +279,7 @@ let free_var typ =
 let generalise typ = let freeOfType = free_var typ in
   let rec generalise_rec frees generalised = match frees with
     [] -> generalised
-    | (freevar::xs) -> generalise_rec xs (TyForall(TyVar(freevar),generalised)) in
+    | (freevar::xs) -> generalise_rec xs (TyForall(freevar,generalised)) in
   generalise_rec freeOfType typ 
 ;;
 

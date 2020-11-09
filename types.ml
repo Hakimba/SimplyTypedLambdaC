@@ -1,11 +1,13 @@
 type ttype =
   TyFun of ttype * ttype
-| TyVar of string (*variable de type, non polymorphique*)
+| TyVar of string 
 | TyInt
 | TyList of ttype
-| TyForall of ttype * ttype
+| TyForall of string * ttype
 | TyUnit
 | TyRef of ttype
+| TyWV of string * ttype * bool
+| TyWF of string * ttype * bool
 
 type op = 
     Add
@@ -17,6 +19,7 @@ type op =
   | Deref
   | Ref
   | Assign
+
 
 and term =
   TmVar of string (*nom de la variable*)
