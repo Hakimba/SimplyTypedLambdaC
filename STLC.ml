@@ -14,6 +14,8 @@ let rec pretty_printer_type t =
                     let res = "("^t1'^") → "^t2' in res
   | TyList(t) -> "["^(pretty_printer_type t)^"]"
   | TyForall(TyVar(x),t) -> "∀"^x^"."^(pretty_printer_type t)
+  | TyUnit -> "unit"
+  | TyRef(t) -> "ref "^(pretty_printer_type t)
   | _ -> ""
 ;;
 
@@ -27,10 +29,13 @@ let statusToString sts = match sts with
 let opToString op = match op with
     Add -> "+"
   | Sub -> "-"
-  | Hd -> "hd"
-  | Tl -> "tl"
+  | Hd -> "head"
+  | Tl -> "tail"
   | Cons -> "::"
   | Fixpoint -> "fxp"
+  | Deref -> "!"
+  | Ref -> "ref"
+  | Assign -> ":="
 
 let rec pretty_printer_term t =
   match t with
@@ -39,21 +44,31 @@ let rec pretty_printer_term t =
   | TmAbs(name,t) ->
                          let t = pretty_printer_term t in
                          "λ"^name^"."^t
-  | TmApp(TmOp(op) as t1,t2) -> (pretty_printer_term t2)^" "^(pretty_printer_term t1)
+  | TmApp(TmOp(op) as t1,t2) -> let isBin = (function x -> match x with
+                                        Add -> true
+                                      | Sub -> true
+                                      | Cons -> true
+                                      | Assign -> true
+                                      | _ -> false
+                                    ) op in
+                                if isBin then (pretty_printer_term t2)^" "^(pretty_printer_term t1)
+                                else "("^(pretty_printer_term t1)^" "^(pretty_printer_term t2)^")"
   | TmApp(t1,t2) -> "("^(pretty_printer_term t1)^" "^(pretty_printer_term t2)^")"
   | TmOp(op) -> opToString op
   | TmSeq(seq) -> pretty_print_list seq
   | TmIfBz(body,t,e) -> let bodystr = pretty_printer_term body in
                         let thenstr = pretty_printer_term t in
                         let elsestr = pretty_printer_term e in
-                        "(if0 "^bodystr^" then "^thenstr^" else )"^elsestr
+                        "(if0 "^bodystr^" then "^thenstr^" else "^elsestr^")"
   | TmIfBe(body,t,e) -> let bodystr = pretty_printer_term body in
                         let thenstr = pretty_printer_term t in
                         let elsestr = pretty_printer_term e in
-                        "(ifempty "^bodystr^" then "^thenstr^" else )"^elsestr
+                        "(ifempty "^bodystr^" then "^thenstr^" else "^elsestr^")"
   | TmLet(var,e1,e2) -> let e1str = pretty_printer_term e1 in
                         let e2str = pretty_printer_term e2 in
                         "let "^var^" = "^e1str^" in "^e2str
+  | TmReg(var) -> var
+  | TmUnit -> "()"
 
 and pretty_print_list l =
   let rec build l = match l with
@@ -74,6 +89,8 @@ let occur_check name typ =
     | TyFun(t1,t2) -> occur_rec t1 || occur_rec t2
     | TyList(t) -> occur_rec t
     | TyForall(arg,res) -> occur_rec res
+    | TyUnit -> false
+    | TyRef(t) -> occur_rec t
   in
   occur_rec typ
 ;;
@@ -88,6 +105,8 @@ let substitute v ts t =
     | TyList(res) -> let sub = sub_rec res in TyList(sub)
     | TyForall(arg,res) -> let sub = sub_rec res in
                             TyForall(arg,sub)
+    | TyUnit -> t'
+    | TyRef(t1) -> TyRef(sub_rec t1)
   in sub_rec t
 ;;
 
@@ -124,6 +143,18 @@ let genEquaOp op target = match op with
                                 TyList(TyVar(tvar))))) in
             Equa(target,new_type)
   | Fixpoint -> ErroratStep "generation d'equation pour point fixe non pris en charge"
+  | Deref -> let tvar = fresh_tvar () in
+              let new_type = TyForall(TyVar tvar,
+                              TyFun(TyRef(TyVar tvar),TyVar tvar)) in
+              Equa(target,new_type)
+  | Ref -> let tvar = fresh_tvar () in
+            let new_type = TyForall(TyVar tvar,
+                            TyFun(TyVar tvar,TyRef(TyVar(tvar)))) in
+            Equa(target,new_type)
+  | Assign -> let tvar = fresh_tvar () in
+                let new_type = TyForall(TyVar tvar,
+                              TyFun(TyRef(TyVar tvar),TyFun(TyVar tvar,TyUnit))) in
+                Equa(target,new_type)
 ;;
 
 (*retrouve le type guess qui a servit d'initiateur a l'inférence, et retourne le type a coté, qui est le bon type inféré*)
@@ -147,10 +178,12 @@ let barendregtisation t =
                | None -> var
              in check res
     | TyInt -> t
-    | TyList(t) -> TyList(barendrec t ctx)
+    | TyList(t') -> TyList(barendrec t' ctx)
     | TyForall(TyVar(arg),res) -> let tvar = fresh_tvar () in
                             let new_ctx = Typecontext.add arg tvar ctx in
                             TyForall(TyVar(tvar),barendrec res new_ctx)
+    | TyUnit -> t
+    | TyRef(t') -> TyRef(barendrec t' ctx)
     | _ -> t
   in
   barendrec t (Typecontext.empty)
@@ -198,6 +231,9 @@ let unification_step equs step =
       |Equa(TyList(t1),TyList(t2)) -> let new_equs = remove_l equs step in
                                       let eq1 = Equa(t1,t2) in
                                       (new_equs@(eq1 :: []),Recommence)
+      |Equa(TyRef(t1),TyRef(t2)) -> let new_equas = remove_l equs step in
+                                    let eq1 = Equa(t1,t2) in
+                                    (new_equas@(eq1::[]),Recommence)
       
       | _ -> (ErroratStep("error at step :"^(string_of_int step)) :: equs ,Echec)
 ;;
@@ -224,6 +260,8 @@ let free_var typ =
     | TyList(t') -> free_rec t' freeset
     | TyForall(TyVar(var),res) -> let freeres = free_rec res freeset in
                           remove_var var freeres 
+    | TyUnit -> freeset
+    | TyRef(t') -> free_rec t' freeset
     | _ -> raise CtorTypeNotSupported in
     free_rec typ []
 ;;
@@ -250,6 +288,10 @@ let rec gen_equas ctx trm target =
                           let equ_body = gen_equas new_ctx body (TyVar(tr)) in
                           let new_equas = (Equa(target,TyFun(TyVar(ta),TyVar(tr)))) :: equas in
                           List.append equ_body new_equas
+  | TmApp(TmOp(Fixpoint),TmAbs(name,body)) -> let tvar = TyVar(fresh_tvar ()) in
+                                              let new_ctx = Typecontext.add name tvar ctx in
+                                              let resfix = gen_equas new_ctx body tvar in
+                                              resfix@(Equa(target,tvar) :: [])
   | TmApp(term1,term2) -> let ta = fresh_tvar () in
                           let equ_fun = gen_equas ctx term1 (TyFun(TyVar(ta),target)) in
                           let equ_arg = gen_equas ctx term2 (TyVar(ta)) in
@@ -273,6 +315,7 @@ let rec gen_equas ctx trm target =
                           let generalised = generalise typeOfe1 in
                           let new_ctx = Typecontext.add var generalised ctx in
                           let equae2 = gen_equas new_ctx e2 target in equae2
+  | _ -> equas
 
 and genEquaSeq seq target ctx = 
 let tvar = fresh_tvar () in
@@ -346,6 +389,11 @@ let typer term = let (typ,status) = type_inference term emptyContext in
 
 let cons o1 o2 = TmApp(TmApp(TmOp(Cons),o1),o2);;
 let add o1 o2 = TmApp(TmApp(TmOp(Add),o1),o2);;
+let sub o1 o2 = TmApp(TmApp(TmOp(Sub),o1),o2);;
+let fixpoint v o = TmApp(TmOp(Fixpoint),TmAbs(v,o));;
+let assign e1 e2 = TmApp(TmApp(TmOp(Assign),e1),e2);;
+let reff e = TmApp(TmOp(Ref),e);;
+let deref e = TmApp(TmOp(Deref),e);;
 let nil = TmSeq([])
 
 (*------------------------TESTs-----------------------------------------*)
@@ -394,13 +442,55 @@ let ex_letii3 = TmLet("f", TmAbs("x", TmVar("x")),TmApp(TmApp(TmVar("f"), TmVar(
 
 (*Test pour itération 4*)
 
-(*let ex_sum = cfix("sum", clam("x", cizte(cvar("x"), cint(0), cadd(cvar("x"), capp(cvar("sum"), csub(cvar("x"), cint(1)))))))
-let ex_sum10 = capp(ex_sum, cint(10))
+(*ok*)
+let ex_sum = fixpoint "sum" (TmAbs("x",
+                              TmIfBz(
+                                TmVar("x"),
+                                TmInt(0),
+                                (add (TmVar("x")) (TmApp(TmVar("sum"),(sub (TmVar("x")) (TmInt(1))))))
+                              )));;
 
-let ex_letletmap = clet("x", cadd(cint(2), cint(3)), (* let x = 2 + 3 in let y = ^z.y + z in map y [1, 2, 3]*)
-  clet("y", clam("z", cadd(cvar("x"), cvar("z"))),
-    capp(capp(ex_map, cvar("y")), ex_seq123)))*)
 
+let ex_sum10 = TmApp(ex_sum, TmInt(10)) (*ok*)
+
+let ex_map = fixpoint "map" (TmAbs("f", 
+                              TmAbs("l", 
+                                TmIfBe(
+                                  TmVar("l"), 
+                                  nil,
+                                  (cons 
+                                    (TmApp(TmVar("f"), TmApp(TmOp(Hd), TmVar("l"))))
+                                    (TmApp(TmApp(TmVar("map"), TmVar("f")), TmApp(TmOp(Tl), TmVar("l"))))))
+  )))
+
+let ex_mapp123 = TmApp(TmApp(ex_map, ex_plusun), ex_seq123);;
+
+let ex_letletmap = TmLet("x", 
+                    (add (TmInt(2)) (TmInt(3))),
+                     TmLet("y", 
+                      TmAbs("z", (add (TmVar("x")) (TmVar("z")))),
+                      TmApp(TmApp(ex_map, TmVar("y")), ex_seq123)));;
+
+
+let ex_letmem1 = TmLet("x",
+                  (reff (TmInt(3))),
+                   TmLet("_",
+                   (assign (TmVar("x")) (add (deref (TmVar("x"))) (TmInt(1)))),
+                    (TmLet("_",
+                      (assign (TmVar("x")) (add (deref (TmVar("x"))) (TmInt(1)))),
+                    (deref (TmVar("x")))))));;
+
+(*Test pour polymorphisme faible*)
+(*let ex_expansif = clet("l", cref(cseq()),
+  clet("_", cassign(cvar("l"), ccons(ex_id, cderef(cvar("l")))),
+    cadd(capp(copp("hd"), cderef(cvar("l"))), cint(8))))
+
+let ex_expansif2 = clet("l", cref(cseq()),
+  cderef(cvar("l")))
+
+let ex_expansif3 = clet("l", cref(cseq()),
+  clet("_", cassign(cvar("l"), cseq(cint(3))),
+    cderef(cvar("l"))))*)
 
 
 

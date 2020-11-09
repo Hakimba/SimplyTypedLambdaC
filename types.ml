@@ -4,6 +4,8 @@ type ttype =
 | TyInt
 | TyList of ttype
 | TyForall of ttype * ttype
+| TyUnit
+| TyRef of ttype
 
 type op = 
     Add
@@ -12,6 +14,9 @@ type op =
   | Tl (*tail of list*)
   | Cons (*:: of list*)
   | Fixpoint (*operateur de point fixe*)
+  | Deref
+  | Ref
+  | Assign
 
 and term =
   TmVar of string (*nom de la variable*)
@@ -23,6 +28,8 @@ and term =
 | TmIfBz of term * term * term
 | TmIfBe of term * term * term
 | TmLet of string * term * term
+| TmReg of string
+| TmUnit
 ;;
 
 type status =
