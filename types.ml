@@ -10,11 +10,8 @@ type op =
   | Sub
   | Hd (*head of list*)
   | Tl (*tail of list*)
+  | Cons (*:: of list*)
   | Fixpoint (*operateur de point fixe*)
-
-type llist =
-  Nil
-  | Cons of term * llist
 
 and term =
   TmVar of string (*nom de la variable*)
@@ -22,7 +19,7 @@ and term =
 | TmApp of term * term
 | TmInt of int
 | TmOp of op
-| TmList of llist
+| TmSeq of term list
 | TmIfBz of term * term * term
 | TmIfBe of term * term * term
 | TmLet of string * term * term
