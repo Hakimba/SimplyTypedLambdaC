@@ -1,3 +1,5 @@
+open Types
+open STLC
 
 let cnt_terme = ref 0;;
 let max_eval = ref 1000;;
@@ -38,6 +40,16 @@ let barendregt (t:term) =
                               let map2 = RefVar.add name new_v map in
                               let eval_t2 = barend_rec t2 map2 in
                               TmLet(name, eval_t1, eval_t2)
+
+    | TmIfBz(cond, th, el) -> let bar_cond = barend_rec cond map in
+                              let bar_th = barend_rec th map in
+                              let bar_el = barend_rec el map in
+                              TmIfBz(bar_cond, bar_th, bar_el)
+
+    | TmIfBe(cond, th, el) -> let bar_cond = barend_rec cond map in
+                              let bar_th = barend_rec th map in
+                              let bar_el = barend_rec el map in
+                              TmIfBe(bar_cond, bar_th, bar_el)
     | _ -> t
   in
   barend_rec t RefVar.empty;;
