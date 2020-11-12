@@ -18,7 +18,6 @@ let rec pretty_printer_type t =
   | TyRef(t) -> "ref "^(pretty_printer_type t)
   | TyWV(name,t,utilise) -> if utilise then pretty_printer_type t else name
   | TyWF(name,t,utilise) -> if utilise then pretty_printer_type t else "∀"^name^"."^(pretty_printer_type t)
-  | _ -> ""
 ;;
 
 
@@ -78,6 +77,23 @@ and pretty_print_list l =
     |(x::xs) -> (pretty_printer_term x)^" "^(build xs) in
   "[ "^build l
 ;;
+
+
+let rec est_non_expansif term = match term with
+  | TmAbs(_,_) -> true
+  | TmApp(TmOp(op),t2) -> let check op = match op with
+                            Add -> false
+                            | Sub -> false
+                            | Cons -> false
+                            | Ref -> false
+                            | Assign -> false
+                            | _ -> est_non_expansif t2 in
+                            check op
+  | TmInt(_) -> true
+  | TmLet(name,e1,e2) -> est_non_expansif e1 && est_non_expansif e2
+  | TmUnit -> true
+  | _ -> false
+
 
 let pretty_printer_equas equas = match equas with
     Equa(t1,t2) -> "\nequation : ["^(pretty_printer_type t1)^","^(pretty_printer_type t2)^"] "
@@ -211,10 +227,29 @@ let barendregtisation t =
                                   let new_ctx = Typecontext.add name tvar ctx in
                                   let nt = barendrec typ new_ctx in
                                   TyWF(name,nt,utilise)
-    | _ -> t
   in
   barendrec t (Typecontext.empty)
 ;;    
+
+
+(*remplacer le type v d'une wv par un autre type ts dans t, utile pour l'unification des wv*)
+let substitute_wv v ts t =
+  let rec sub_rec t' = match t' with
+    | TyWV(name,typ,utilise) -> TyWV(name,ts,true)
+                                  
+    | _ -> t'
+  in sub_rec t
+;;
+
+
+let substitute_wv_everywhere v equs =
+  List.map (function el -> match el with
+                          Equa((TyWV(name,typ,utilise) as t1),td) when typ = v -> Equa((substitute_wv typ td t1),td)
+                        | Equa(tg,(TyWV(name,typ,utilise) as t2)) when typ = v -> Equa(tg,(substitute_wv typ tg t2))
+                        | _ -> el
+                      )
+      equs
+;;
 
 
 let unification_step equs step =
@@ -224,59 +259,76 @@ let unification_step equs step =
     let el = List.nth equs step in
     match el with
       Equa(TyVar("???"),_) -> (equs,Continue)
-      |Equa(_,TyVar("???")) -> (equs,Continue)
+      |Equa(_,TyVar("???")) ->  (equs,Continue)
       |Equa(t1,t2) when (t1 = t2) -> (remove_l equs step,Continue)
-      |Equa(TyFun(tga,tgr),TyFun(tda,tdr)) -> let new_equs = remove_l equs step in
-                                             let eq1 = Equa(tga,tda) in
-                                             let eq2 = Equa(tgr,tdr) in
-
-                                             (new_equs@(eq1 ::(eq2 :: [])),Recommence)
-      |Equa(TyVar(name),td) -> if not (occur_check name td) then
-                                let new_equs = remove_l equs step in
-                                (substitute_everywhere name td new_equs,Recommence)
-                              else
-                                (ErroratStep("error at step :"^(string_of_int step)) :: equs,Echec)
-      |Equa(tg,TyVar(name)) -> if not (occur_check name tg) then
-                                let new_equs = remove_l equs step in
-                                (substitute_everywhere name tg new_equs,Recommence)
-                              else
-                                (ErroratStep("error at step :"^(string_of_int step)) :: equs,Echec)
-      |Equa(TyWV(name,typ,utilise),td) -> if not (occur_check name td) then
-                                            if utilise then
-                                              let eq1 = Equa(typ,td) in
-                                              let new_equs = remove_l equs step in
-                                              (new_equs@(eq1::[]),Recommence)
-                                            else ((remove_l equs step),Recommence)
-                                          else
-                                            (ErroratStep("error at step :"^(string_of_int step)) :: equs,Echec)
-      |Equa(tg,TyWV(name,typ,utilise)) -> if not (occur_check name tg) then
-                                            if utilise then
-                                              let eq1 = Equa(typ,tg) in
-                                              let new_equs = remove_l equs step in
-                                              (new_equs@(eq1::[]),Recommence)
-                                            else ((remove_l equs step),Recommence)
-                                          else
-                                            (ErroratStep("error at step :"^(string_of_int step)) :: equs,Echec)
-      |Equa(TyForall(var,res),td) -> let typ1 = barendregtisation (TyForall(var,res)) in
+      |Equa(TyForall(var,res),td) ->  let typ1 = barendregtisation (TyForall(var,res)) in
                                      let rs x = match x with
                                       TyForall(v,r) -> r
                                       | _ -> x in
                                      let eq1 = Equa((rs typ1),td) in
                                      let new_equs = remove_l equs step in
                                      (new_equs@(eq1::[]),Recommence)
-      |Equa(tg,TyForall(var,res)) -> let typ1 = barendregtisation (TyForall(var,res)) in
+      |Equa(tg,TyForall(var,res)) ->  let typ1 = barendregtisation (TyForall(var,res)) in
                                      let rs x = match x with
                                       TyForall(v,r) -> r
-                                      | _ -> x in
+                                      | _ ->  x in
                                      let eq1 = Equa((rs typ1),tg) in
                                      let new_equs = remove_l equs step in
                                      (new_equs@(eq1::[]),Recommence)
-      |Equa(TyWF(name,typ,utilise),td) ->
+      |Equa(TyWF(name,typ,utilise),td) -> 
                                             let eq1 = Equa(typ,td) in
+                                            let _ = pretty_printer_equas eq1 in
                                             let new_equs = remove_l equs step in
+                                            let _ = List.map (function eq -> pretty_printer_equas eq) new_equs in
                                             (new_equs@(eq1::[]),Recommence)
 
-      |Equa(TyList(t1),TyList(t2)) -> let new_equs = remove_l equs step in
+      |Equa(TyVar(name),td) -> if not (occur_check name td) then
+                                let new_equs = remove_l equs step in
+                                (substitute_everywhere name td new_equs,Recommence)
+                              else
+                                (ErroratStep("error at step :"^(string_of_int step)) :: equs,Echec)
+      |Equa(tg,TyVar(name)) ->  if not (occur_check name tg) then
+                                let new_equs = remove_l equs step in
+                                let f = List.map (pretty_printer_equas) (substitute_everywhere name tg new_equs) in
+                                let _ = List.iter (print_string) f in
+                                (substitute_everywhere name tg new_equs,Recommence)
+                              else
+                                (ErroratStep("error at step :"^(string_of_int step)) :: equs,Echec)
+      |Equa(TyWV(name,typ,utilise),td) -> 
+                                          if not (occur_check name td) then
+                                            if utilise then
+                                              
+                                              let eq1 = Equa(typ,td) in
+                                              let new_equs = remove_l equs step in
+                                              (new_equs@(eq1::[]),Recommence)
+                                            else
+                                              
+                                              let new_eqs1 = substitute_wv_everywhere typ equs in
+                                              let new_eqs2 = remove_l new_eqs1 step in
+                                              (new_eqs2,Recommence)
+                                          else
+                                            (ErroratStep("error at step :"^(string_of_int step)) :: equs,Echec)
+      |Equa(tg,TyWV(name,typ,utilise)) -> 
+                                          if not (occur_check name tg) then
+                                            if utilise then
+                                              
+                                              let eq1 = Equa(typ,tg) in
+                                              let new_equs = remove_l equs step in
+                                              (new_equs@(eq1::[]),Recommence)
+                                            else
+                                              
+                                              let new_eqs1 = substitute_wv_everywhere typ equs in
+                                              let new_eqs2 = remove_l new_eqs1 step in
+                                              (new_eqs2,Recommence)
+                                          else
+                                            (ErroratStep("error at step :"^(string_of_int step)) :: equs,Echec)
+      |Equa(TyFun(tga,tgr),TyFun(tda,tdr)) ->  let new_equs = remove_l equs step in
+                                             let eq1 = Equa(tga,tda) in
+                                             let eq2 = Equa(tgr,tdr) in
+                                             (new_equs@(eq1 ::(eq2 :: [])),Recommence)
+
+      |Equa(TyList(t1),TyList(t2)) ->
+                                      let new_equs = remove_l equs step in
                                       let eq1 = Equa(t1,t2) in
                                       (new_equs@(eq1 :: []),Recommence)
       |Equa(TyRef(t1),TyRef(t2)) -> let new_equas = remove_l equs step in
@@ -304,13 +356,17 @@ let free_var typ =
                       SS.elements (SS.union freearg freeres)
 
     | TyVar(name) -> (name :: freeset)
+    | TyWV(name,typ,utilise) -> if utilise then free_rec typ freeset else [name]
     | TyInt -> freeset
     | TyList(t') -> free_rec t' freeset
     | TyForall(var,res) -> let freeres = free_rec res freeset in
                           remove_var var freeres 
+    | TyWF(var,typ,utilise) ->  if utilise then free_rec typ freeset
+                                else
+                                  let vs = free_rec typ freeset in
+                                  remove_var var vs
     | TyUnit -> freeset
-    | TyRef(t') -> free_rec t' freeset
-    | _ -> raise CtorTypeNotSupported in
+    | TyRef(t') -> free_rec t' freeset in 
     free_rec typ []
 ;;
 
@@ -318,8 +374,21 @@ let generalise typ = let freeOfType = free_var typ in
   let rec generalise_rec frees generalised = match frees with
     [] -> generalised
     | (freevar::xs) -> generalise_rec xs (TyForall(freevar,generalised)) in
-  generalise_rec freeOfType typ 
+  generalise_rec freeOfType typ
 ;;
+
+let make_wv v = TyWV(v,TyInt,false);;
+
+let make_wf v typ = let nv = "_"^v in
+                    let nvar = make_wv(nv) in
+                    let nres = substitute v nvar typ in
+                    TyWF(nv,nres,false);;
+
+let weak_generalise typ = let freeOfType = free_var typ in
+  let rec generalise_rec frees generalised = match frees with
+    [] -> generalised
+    | (freevar::xs) -> generalise_rec xs (make_wf freevar generalised) in
+  generalise_rec freeOfType typ 
 
 let rec gen_equas ctx trm target =
   let equas = [] in
@@ -359,10 +428,16 @@ let rec gen_equas ctx trm target =
                           let elEqua = gen_equas ctx el (TyVar(nt)) in
                           let eqs1 = condEqua @ (thEqua @ elEqua) in
                           eqs1@(Equa(target,TyVar(nt)) :: [])
-  | TmLet(var,e1,e2) -> let (typeOfe1,status) = type_inference e1 ctx in
-                          let generalised = generalise typeOfe1 in
-                          let new_ctx = Typecontext.add var generalised ctx in
-                          let equae2 = gen_equas new_ctx e2 target in equae2
+  | TmLet(var,e1,e2) -> let _ = print_string "let\n" in 
+                        let (typeOfe1,status) = type_inference e1 ctx in
+                          if est_non_expansif e1 then
+                            let generalised = generalise typeOfe1 in
+                            let new_ctx = Typecontext.add var generalised ctx in
+                            let equae2 = gen_equas new_ctx e2 target in equae2
+                          else
+                            let generalised = weak_generalise typeOfe1 in
+                            let new_ctx = Typecontext.add var generalised ctx in
+                            let equae2 = gen_equas new_ctx e2 target in equae2
   | _ -> equas
 
 and genEquaSeq seq target ctx = 
@@ -381,11 +456,6 @@ and unification equs =
   let status = ref Echec in
   while (!c) < (!max_unif) do
     let (res,stat) = unification_step (!new_equs) (!step) in
-    let str_equs = List.map (function eq -> pretty_printer_equas eq) res in
-    let () = print_string "[\n" in
-    let () = List.iter print_string str_equs in
-    let () = print_string (statusToString stat) in
-    let () = print_string "\n]" in
     if stat = Continue then
       begin
         new_equs := res;
@@ -417,11 +487,7 @@ and unification equs =
 
 and type_inference term ctx =
   let equations = gen_equas ctx term (TyVar("???")) in
-  let str_equs = List.map (function eq -> pretty_printer_equas eq) equations in
-  let () = List.iter print_string str_equs in
   let (res,status) = unification equations in
-  (*let str_equs = List.map (function eq -> pretty_printer_equas eq) res in
-  let () = List.iter print_string str_equs in*)
   if status = Fini then let typ = (cut_the_guess res) in (typ,status)
   else raise (TypingFail ("Echec de typage pour le terme : "^(pretty_printer_term term)))
 
@@ -430,7 +496,7 @@ and type_inference term ctx =
 let emptyContext = Typecontext.empty;;
 
 let typer term = let (typ,status) = type_inference term emptyContext in
-  (pretty_printer_term term)^" : "^(pretty_printer_type typ)
+  print_string ("\n\nTERME : "^(pretty_printer_term term)^" : "^"\nTYPE : "^(pretty_printer_type typ)^"\n")
 
 
 (* Fonction de creation de terme fastidieux *)
@@ -441,6 +507,7 @@ let sub o1 o2 = TmApp(TmApp(TmOp(Sub),o1),o2);;
 let fixpoint v o = TmApp(TmOp(Fixpoint),TmAbs(v,o));;
 let assign e1 e2 = TmApp(TmApp(TmOp(Assign),e1),e2);;
 let reff e = TmApp(TmOp(Ref),e);;
+let hd l = TmApp(TmOp(Hd),l);;
 let deref e = TmApp(TmOp(Deref),e);;
 let nil = TmSeq([])
 
@@ -474,7 +541,7 @@ let ex_seq123 = TmSeq([TmInt(1);TmInt(2);TmInt(3)]) (*ok*)
 let ex_enseq3 = TmAbs("x",TmSeq([TmVar("x");TmVar("x");TmVar("x")]));; (*ok*)
 let ex_enseq2d4 = TmAbs("x",TmAbs("y",TmSeq([TmVar("x");TmVar("y");TmVar("x");TmVar("y")])));; (*ok*)
 let ex_seq3i = TmApp(ex_enseq3,ex_id);; (*ok*)
-let ex_enseq2d = TmApp(TmApp(ex_enseq2d4,ex_id),TmInt(8));; (*ne passe pas car type pas uniforme, normal*)
+let ex_enseq2d = TmApp(TmApp(ex_enseq2d4,ex_id),TmInt(8));; (*ne passe pas car type pas uniforme, c'est normal*)
 
 let ex_cons123 = cons (TmInt(1)) (cons (TmInt(2)) (cons (TmInt(3)) nil));; (*ok*)
 let ex_izte23a0 = TmIfBz(TmInt(0), TmInt(2), TmInt(3));; (*ok*)
@@ -528,28 +595,16 @@ let ex_letmem1 = TmLet("x",
                       (assign (TmVar("x")) (add (deref (TmVar("x"))) (TmInt(1)))),
                     (deref (TmVar("x")))))));;
 
+(*PARTIE 4.6 NE FONCTIONNE PAS*)
+
 (*Test pour polymorphisme faible*)
-(*let ex_expansif = clet("l", cref(cseq()),
-  clet("_", cassign(cvar("l"), ccons(ex_id, cderef(cvar("l")))),
-    cadd(capp(copp("hd"), cderef(cvar("l"))), cint(8))))
+(*let ex_expansif = TmLet("l", (reff nil),
+  (TmLet("_", (assign (TmVar("l")) ( cons ex_id (deref (TmVar("l"))))),
+    (add (hd (deref (TmVar("l")))) (TmInt(8))))));;
 
-let ex_expansif2 = clet("l", cref(cseq()),
-  cderef(cvar("l")))
+let ex_expansif2 = TmLet("l", (reff nil),
+  (deref (TmVar("l"))));;
 
-let ex_expansif3 = clet("l", cref(cseq()),
-  clet("_", cassign(cvar("l"), cseq(cint(3))),
-    cderef(cvar("l"))))*)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+let ex_expansif3 = TmLet("l", (reff nil),
+  TmLet("_", (assign (TmVar("l")) (TmSeq([TmInt(3)]))),
+    deref (TmVar("l"))));;*)
