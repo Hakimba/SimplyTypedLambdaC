@@ -531,9 +531,9 @@ let ex_siii = TmApp(TmApp(TmApp(ex_s,ex_id),ex_id),ex_id);; (*ok*)
 
 
 (*Test pour itération 3*)
-let ex_2p3 = TmApp(TmApp(TmOp(Add),TmInt(7)),TmInt(7));;  (*ok*)
+let ex_2p3 = TmApp(TmApp(TmOp(Add),TmInt(2)),TmInt(3));;  (*ok*)
 let ex_plus = TmAbs("x",TmAbs("y",TmApp(TmApp(TmOp(Add),TmVar("x")),TmVar("y"))));; (*ok*)
-let ex_plus23 = TmApp(TmApp(ex_plus,TmInt(2)),TmInt(7));; (*ok*)
+let ex_plus27 = TmApp(TmApp(ex_plus,TmInt(2)),TmInt(7));; (*ok*)
 let ex_moins = TmAbs("x",TmAbs("y",TmApp(TmApp(TmOp(Sub),TmVar("x")),TmVar("y"))));; (*ok*)
 let ex_moins23 = TmApp(TmApp(ex_moins,TmInt(2)),TmInt(3));; (*ok*)
 let ex_moins32 = TmApp(TmApp(ex_moins,TmInt(3)),TmInt(2));; (*ok*)
