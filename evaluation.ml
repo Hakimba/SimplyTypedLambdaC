@@ -1,5 +1,3 @@
-open Types
-open STLC
 
 let cnt_terme = ref 0;;
 let max_eval = ref 1000;;
@@ -28,18 +26,18 @@ let barendregt (t:term) =
                         let barendt2 = barend_rec t2 map in 
                         TmApp(barendt1, barendt2)
 
-    (*| TmList(seq) ->  let rec seqBarend l res = 
+    | TmSeq(seq) ->  let rec seqBarend l res = 
                         match l with
-                          Nil -> res
-                          | Cons(hd, tl) -> 
-                              seqBarend tl (Cons((barend_rec hd map), res))
-                      in TmList(seqBarend seq Nil)*)
+                          [] -> res
+                          | hd::tl -> 
+                              seqBarend tl (res@[(barend_rec hd map)])
+                      in TmSeq(seqBarend seq [])
 
     | TmLet(name, t1, t2) ->  let new_v = fresh_tvar() in
                               let eval_t1 = barend_rec t1 map in
                               let map2 = RefVar.add name new_v map in
                               let eval_t2 = barend_rec t2 map2 in
-                              TmLet(name, eval_t1, eval_t2)
+                              TmLet(new_v, eval_t1, eval_t2)
 
     | TmIfBz(cond, th, el) -> let bar_cond = barend_rec cond map in
                               let bar_th = barend_rec th map in
@@ -54,7 +52,7 @@ let barendregt (t:term) =
   in
   barend_rec t RefVar.empty;;
 
-let substitute v ts t =
+(*let substitute v ts t =
   let rec sub_rec t' = match t' with
       (TyVar x) -> if x = v then ts else t'
     | TyFun(t1,t2) -> let rt1 = sub_rec t1 in
@@ -66,18 +64,23 @@ let substitute v ts t =
                             TyForall(arg,sub)
   in sub_rec t
 ;;
+*)
 
 (*Substitue x par a dans l*)
 let instantie l x a = 
   let rec inst_rec l' = match l' with
-    TmVar(v) as tv -> if v = x then a else tv
 
+    TmVar(v) as tv -> if v = x then a else tv
     | TmAbs(name, term) ->  TmAbs(name,(inst_rec term))
     | TmApp(t1, t2) ->  TmApp((inst_rec t1), (inst_rec t2))
     | TmLet(name, t1, t2) -> TmLet(name, (inst_rec t1), (inst_rec t2))
     | TmIfBz(cond, th, el) -> TmIfBz((inst_rec cond), (inst_rec th), (inst_rec el))
     | TmIfBe(cond, th, el) -> TmIfBz((inst_rec cond), (inst_rec th), (inst_rec el))
-
+    | TmSeq(seq) -> let rec process suite =
+                      match suite with
+                      | [] -> []
+                      | hd :: tl -> (inst_rec hd) :: (process tl)
+                    in TmSeq(process seq)
     | _ -> l'
 
   in inst_rec l
@@ -87,12 +90,27 @@ let instantie l x a =
 let rec ltrcbv_etape term = let status = "KO" in
   match term with
 
-      TmApp(TmAbs(name,body),t2) -> let inst = instantie body name t2 in
+    | TmApp(TmAbs(name,body),t2)  -> let inst = instantie body name t2 in
                                     ("OK", inst)
+
+    | TmApp(TmOp(Hd), (TmSeq(seq))) -> let res s = match s with
+                                      | [] -> (status,term)
+                                      | hd :: tl -> ("OK",hd)
+                                      in res seq
+
+    | TmApp(TmOp(Tl), (TmSeq(seq))) ->let _ = print_string "\nhere\n" in
+                                      let res s = match s with
+                                      | [] -> (status,term)
+                                      | hd :: tl -> ("OK",TmSeq(tl))
+                                      in res seq
 
     | TmApp(TmOp(Fixpoint), TmAbs(name, body)) as app ->
                         let inst = instantie (barendregt body) name app in
                           ("OK", inst)
+    
+    | TmApp(TmApp(TmOp(Add),TmInt(e1)),TmInt(e2)) -> ("OK", TmInt(e1+e2))
+    | TmApp(TmApp(TmOp(Sub),TmInt(e1)),TmInt(e2)) -> ("OK", TmInt(e1-e2))
+    | TmApp(TmApp(TmOp(Cons),elem),TmSeq(seq)) -> ("OK", TmSeq(elem::seq))
 
     | TmApp(t1, t2) ->  let (status,resfun) = ltrcbv_etape t1 in
                         if status = "OK" then ("OK",TmApp(resfun, t2))
@@ -119,6 +137,16 @@ let rec ltrcbv_etape term = let status = "KO" in
                           if cond = TmSeq([]) then ("OK", th)
                           else ("OK", el)
 
+    | TmSeq(seq) -> let rec process suite pre =
+                      match suite with
+                      | [] -> (status,term)
+                      | hd :: tl -> let (status,resfun) = ltrcbv_etape hd in
+                          if status = "OK" then 
+                            ("OK", TmSeq(pre @ (resfun::tl)))
+                          else
+                            process tl (pre @ [hd])
+                    in process seq []
+
     | _ -> (status,term)
 
 let ltrcbv t =
@@ -134,7 +162,45 @@ let ltrcbv t =
       courant := new_red;
       incr c
     done;
-    if (!c) = (!max_eval) then print_string "\nSTOP trop de reductions" else ()
+    if (!c) = (!max_eval) then print_string "\nSTOP trop de reductions\n" else ()
   with
-    BreakLoop -> print_string "\névaluation terminée"
+    BreakLoop -> print_string "\névaluation terminée\n"
+;;
 
+(* OK !
+ltrcbv ex_id
+ltrcbv ex_kiom
+ltrcbv ex_s
+ltrcbv delta
+ltrcbv ex_triple
+ltrcbv ex_siii
+
+ltrcbv ex_2p3 
+ltrcbv ex_plus23
+ltrcbv ex_moins23
+
+ltrcbv ex_seq123
+ltrcbv ex_enseq3
+ltrcbv ex_enseq2d4
+ltrcbv ex_seq3i
+ltrcbv ex_cons123
+ltrcbv ex_izte23a0
+ltrcbv ex_izte23a8
+ltrcbv ex_iete23ae
+ltrcbv ex_iete23a123
+
+ltrcbv ex_plusun
+ltrcbv ex_letplus
+ltrcbv letTerm
+
+ltrcbv ex_letii3
+ltrcbv ex_sum10 -> trace baleze (origine inconnue)
+*)
+
+(* ECHEC 
+Probleme avec point fixe OU mauvaise gestions 
+des listes Hd et Tl dans ltrcbv_etape
+
+ltrcbv ex_mapp123 
+ltrcbv (TmApp(ex_map, ex_plusun)) ??
+*)
